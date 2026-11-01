@@ -29,7 +29,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text('Привет! Пришли публичную ссылку на видео или изображение. Поддерживаются YouTube, TikTok, Instagram, Pinterest, Facebook, X и Threads. Скачивай только материалы, на которые у тебя есть права.')
 
 def download(url, folder):
-    opts = {'outtmpl': str(Path(folder) / '%(title).70s-%(id)s.%(ext)s'), 'format': 'best[filesize<45M]/best', 'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'}, 'merge_output_format': 'mp4', 'noplaylist': True, 'max_filesize': MAX_SIZE, 'quiet': True, 'no_warnings': True, 'retries': 2, 'socket_timeout': 20}
+    opts = {'outtmpl': str(Path(folder) / '%(title).70s-%(id)s.%(ext)s'), 'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'}, 'merge_output_format': 'mp4', 'noplaylist': True, 'max_filesize': MAX_SIZE, 'quiet': True, 'no_warnings': True, 'retries': 2, 'socket_timeout': 20}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         path = Path(ydl.prepare_filename(info))
