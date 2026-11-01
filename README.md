@@ -4,15 +4,24 @@ Python Telegram bot using `python-telegram-bot` and `yt-dlp`.
 
 Supported public sources include YouTube, TikTok, Instagram, Pinterest, Facebook, X/Twitter and Threads. Support varies by platform and can change. Private or login-gated posts are not supported.
 
-## Deploy a free, continuously running worker
+## Preferred host: Silly Development
 
 [![Deploy to Silly Development](https://sillydev.co.uk/deploy/button.svg)](https://sillydev.co.uk/deploy?repository=https://github.com/rendalpr/telegram-downloader&runtime=python)
 
-1. Open the deploy button, sign in or create an account, choose a free Python server, and confirm deployment of this public repository.
-2. In the server's Startup settings, set `TELEGRAM_BOT_TOKEN` to the token from BotFather. The repository config selects Python 3.12 and `main.py`. Keep the token out of GitHub and chat.
-3. Start or restart the server, then open the bot in Telegram and send `/start`.
+Choose a free Python server, set `TELEGRAM_BOT_TOKEN` in its Startup settings, then start it. The repository config selects Python 3.12 and `main.py`. Keep the token out of GitHub and chat.
 
-The provider currently advertises 25% of one CPU core, 256 MB RAM and 512 MB disk for free, with no card or monthly runtime cap. It says free servers stay running, but its terms provide no uptime guarantee and allow free service to be suspended or withdrawn. Treat this as best-effort hosting, not guaranteed 24/7 availability. Deploy code changes manually from the provider panel; automatic deployment on every push requires connecting a GitHub account.
+Silly Development advertises 25% of one CPU core, 256 MB RAM and 512 MB disk with no card or monthly runtime cap. Its terms do not guarantee uptime and allow free service to be suspended or withdrawn. Treat it as best-effort hosting, not guaranteed 24/7 availability. If the deploy page says free servers are full, use the alternative below.
+
+## Alternative when Silly Development is full: Bot-Hosting.net
+
+Bot-Hosting.net's free plan currently has one Python deployment with 25% CPU, 256 MB RAM and 512 MB storage, with no card required. It requires a manual renewal every 4 days; its terms provide no uptime commitment, and a missed renewal suspends the deployment. This is not guaranteed 24/7 hosting.
+
+1. Sign in or create an account with GitHub or Discord.
+2. In the panel, create a new **Application** deployment, choose **GitHub** as the source, enter `rendalpr/telegram-downloader`, and select **Python**.
+3. In **Startup**, set the entry file to `main.py`. In **Environment**, add `TELEGRAM_BOT_TOKEN` using the value from BotFather. Start the deployment, then send `/start` to the bot.
+4. Renew the free plan from the dashboard every 4 days to keep it running.
+
+See the provider's [deployment guide](https://bot-hosting.net/docs/guides/create-a-deployment), [Python setup guide](https://bot-hosting.net/docs/guides/set-up-a-deployment), and [free-plan terms](https://bot-hosting.net/legal).
 
 ## Run locally (Windows PowerShell)
 
