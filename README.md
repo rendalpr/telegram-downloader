@@ -2,7 +2,7 @@
 
 Python Telegram bot using `python-telegram-bot` and `yt-dlp`.
 
-Supported public sources include YouTube, TikTok, Instagram, Pinterest, Facebook, X/Twitter and Threads. Support varies by platform and can change. Private or login-gated posts are not supported.
+Supported sources include publicly accessible YouTube videos and YouTube Music, TikTok, Instagram, Pinterest, Facebook, X/Twitter, Threads, VK, Reddit, Twitch clips, Vimeo, OK, Tumblr, Dailymotion, Likee and SoundCloud. Support varies by site and can change. Instagram Stories and other login-gated content may require account access and may not work. Spotify and Apple Music links are recognized but their protected streams are not downloadable by this bot.
 
 ## Preferred host: Silly Development
 
@@ -42,5 +42,6 @@ See the provider's [deployment guide](https://bot-hosting.net/docs/guides/create
 - Maximum download size: 45 MB.
 - Per-user cooldown: 15 seconds.
 - Only allowlisted public URLs are accepted.
+- YouTube may reject requests from the hosting provider's IP and require verification.
 - Download only content you own or have permission to save. Respect copyright and platform terms.
 - The bot does not bypass private-account controls, DRM, paywalls or other access restrictions.
