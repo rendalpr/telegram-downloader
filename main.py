@@ -1,5 +1,6 @@
 import asyncio, logging, os, re, tempfile, time
 from pathlib import Path
+from dotenv import load_dotenv
 from urllib.parse import urlparse
 import yt_dlp
 from telegram import Update
@@ -8,6 +9,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
+load_dotenv()
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 MAX_SIZE = 45 * 1024 * 1024
 COOLDOWN = 15
@@ -15,7 +17,7 @@ last_request = {}
 HOSTS = {'youtube.com','www.youtube.com','youtu.be','m.youtube.com','tiktok.com','www.tiktok.com','vm.tiktok.com','vt.tiktok.com','instagram.com','www.instagram.com','pinterest.com','www.pinterest.com','pin.it','facebook.com','www.facebook.com','fb.watch','x.com','www.x.com','twitter.com','www.twitter.com','threads.net','www.threads.net'}
 
 def get_url(text):
-    m = re.search(r'https?://\\S+', text)
+    m = re.search(r'https?://\S+', text)
     if not m: return None
     url = m.group(0).rstrip('.,!?)')
     try: host = (urlparse(url).hostname or '').lower()

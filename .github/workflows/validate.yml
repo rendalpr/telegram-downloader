@@ -1,0 +1,25 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile bot
+        run: python -m py_compile main.py
+      - name: Validate deploy settings
+        run: python -c "import configparser; c=configparser.ConfigParser(); assert c.read('sillydev.conf') == ['sillydev.conf']; assert c['docker']['image'] == 'Python 3.12'; assert c['variables']['MAIN_FILE'] == 'main.py'; assert 'TELEGRAM_BOT_TOKEN' not in c['variables']"
