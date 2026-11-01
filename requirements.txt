@@ -1,4 +1,4 @@
 python-telegram-bot>=21.0,<23.0
-yt-dlp[default]>=2026.10.26,<2027.0
+yt-dlp[default,deno]>=2026.10.26,<2027.0
 curl-cffi==0.16.0
 python-dotenv>=1.0,<2.0
