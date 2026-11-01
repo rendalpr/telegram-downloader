@@ -1,4 +1,4 @@
-import asyncio, logging, os, re, tempfile, time
+import asyncio, logging, os, re, shutil, tempfile, time
 from pathlib import Path
 from dotenv import load_dotenv
 from urllib.parse import urlparse
@@ -13,8 +13,30 @@ log = logging.getLogger(__name__)
 load_dotenv()
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 MAX_SIZE = 45 * 1024 * 1024
+MAX_PHOTO_SIZE = 9 * 1024 * 1024
 COOLDOWN = 15
 last_request = {}
+WELCOME_IMAGE = Path(__file__).resolve().parent / "assets" / "welcome.png"
+FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
+
+if not FFMPEG_AVAILABLE:
+    log.warning("FFmpeg is not installed; downloads will use the best single-file format available.")
+
+WELCOME_TEXT = (
+    "👋 Привет! Я — «Дай Скачать» 🎬\n"
+    "Пришли публичную ссылку — попробую скачать видео, фото или аудио "
+    "в наилучшем качестве, доступном на платформе.\n\n"
+    "🌐 Поддерживаемые платформы:\n"
+    "▶️ YouTube и Shorts · 🎵 YouTube Music · 🎶 TikTok\n"
+    "📸 Instagram · 📌 Pinterest · 📘 Facebook\n"
+    "❎ X (Twitter) · 🧵 Threads · 🔷 VK · 👽 Reddit\n"
+    "🟣 Twitch · 🎞 Vimeo · 🟠 OK · 🟪 Tumblr\n"
+    "▶️ Dailymotion · 💚 Likee · 🎧 SoundCloud\n\n"
+    "ℹ️ Истории и закрытые публикации могут требовать входа и быть недоступны. "
+    "Spotify и Apple Music не отдают боту скачиваемые аудиофайлы.\n"
+    "📦 Ограничение файла — 45 МБ · ⏱ Пауза между загрузками — 15 секунд.\n"
+    "⚖️ Сохраняй только материалы, на которые у тебя есть права."
+)
 
 HOSTS = (
     'youtube.com', 'youtu.be', 'youtube-nocookie.com',
@@ -39,6 +61,7 @@ TIKTOK_HOSTS = ('tiktok.com',)
 PROTECTED_MUSIC_HOSTS = ('spotify.com', 'spotify.link', 'spoti.fi', 'music.apple.com', 'itunes.apple.com')
 VIDEO_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm'}
 AUDIO_EXTENSIONS = {'.mp3', '.m4a'}
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 
 def host_matches(host, domains):
     return any(host == domain or host.endswith('.' + domain) for domain in domains)
@@ -56,18 +79,21 @@ def get_url(text):
     return url if host_matches(get_host(url), HOSTS) else None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text(
-        'Пришли публичную ссылку на видео, фото или аудио. Поддерживаются YouTube, TikTok, Instagram, Pinterest, '
-        'Facebook, X, Threads, VK, Reddit, Twitch, Vimeo, OK, Tumblr, Dailymotion, Likee и SoundCloud. '
-        'Доступ к Stories и закрытым публикациям может требовать входа. Spotify и Apple Music не отдают боту '
-        'скачиваемые аудиофайлы. Скачивай только материалы, на которые у тебя есть права.'
-    )
+    message = update.effective_message
+    if not message:
+        return
+    try:
+        with WELCOME_IMAGE.open('rb') as photo:
+            await message.reply_photo(photo=photo, caption=WELCOME_TEXT)
+    except OSError:
+        log.warning("Welcome image is missing; sending the text greeting only.")
+        await message.reply_text(WELCOME_TEXT)
 
 def download(url, folder):
     host = get_host(url)
     opts = {
         'outtmpl': str(Path(folder) / '%(title).70s-%(id)s.%(ext)s'),
-        'merge_output_format': 'mp4',
+        'format': 'bestvideo*+bestaudio/best/bestaudio' if FFMPEG_AVAILABLE else 'best/bestaudio',
         'noplaylist': True,
         'max_filesize': MAX_SIZE,
         'quiet': True,
@@ -120,10 +146,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             path = await asyncio.to_thread(download, url, folder)
             with path.open('rb') as media:
                 suffix = path.suffix.lower()
-                if suffix in VIDEO_EXTENSIONS:
+                if suffix == '.mp4':
                     await msg.reply_video(video=media, caption='Готово.')
                 elif suffix in AUDIO_EXTENSIONS:
                     await msg.reply_audio(audio=media, caption='Готово.')
+                elif suffix in IMAGE_EXTENSIONS and path.stat().st_size <= MAX_PHOTO_SIZE:
+                    await msg.reply_photo(photo=media, caption='Готово.')
                 else:
                     await msg.reply_document(document=media, caption='Готово.')
         await status.delete()
