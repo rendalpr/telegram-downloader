@@ -25,7 +25,7 @@ See the provider's [deployment guide](https://bot-hosting.net/docs/guides/create
 
 ## Run locally (Windows PowerShell)
 
-1. Install Python 3.10 or newer.
+1. Install Python 3.11 or newer.
 2. Run:
 
    ```powershell
