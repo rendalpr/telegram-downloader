@@ -22,4 +22,4 @@ jobs:
       - name: Compile bot
         run: python -m py_compile main.py
       - name: Validate deploy settings
-        run: python -c "import configparser; c=configparser.ConfigParser(); c.optionxform=str; assert c.read('sillydev.conf') == ['sillydev.conf']; assert c['docker']['image'] == 'Python 3.12'; assert c['variables']['MAIN_FILE'] == 'main.py'; assert 'TELEGRAM_BOT_TOKEN' not in c['variables']"
+        run: python -c "import configparser; c=configparser.ConfigParser(); c.optionxform=str; assert c.read('sillydev.conf') == ['sillydev.conf']; assert c['docker']['image'].strip(chr(34)) == 'Python 3.12'; assert c['variables']['MAIN_FILE'].strip(chr(34)) == 'main.py'; assert 'TELEGRAM_BOT_TOKEN' not in c['variables']"
