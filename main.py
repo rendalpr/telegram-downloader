@@ -8,6 +8,7 @@ from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 load_dotenv()
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
