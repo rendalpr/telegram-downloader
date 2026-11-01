@@ -50,7 +50,7 @@ def get_host(url):
         return ''
 
 def get_url(text):
-    m = re.search(r'https?://\\S+', text)
+    m = re.search(r'https?://\S+', text)
     if not m: return None
     url = m.group(0).rstrip('.,!?)')
     return url if host_matches(get_host(url), HOSTS) else None
