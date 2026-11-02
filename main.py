@@ -12,6 +12,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 load_dotenv()
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+YOUTUBE_PROXY = os.getenv('YOUTUBE_PROXY')
 MAX_SIZE = 45 * 1024 * 1024
 MAX_PHOTO_SIZE = 9 * 1024 * 1024
 WELCOME_IMAGE = Path(__file__).resolve().parent / "assets" / "welcome.png"
@@ -114,6 +115,8 @@ def download(url, folder):
         }
     if host_matches(host, YOUTUBE_HOSTS):
         opts['force_ipv4'] = True
+        if YOUTUBE_PROXY:
+            opts['proxy'] = YOUTUBE_PROXY
         deno_candidates = (
             Path.home() / '.local' / 'bin' / 'deno',
             Path.home() / '.deno' / 'bin' / 'deno',
