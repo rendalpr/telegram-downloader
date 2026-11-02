@@ -1,4 +1,4 @@
-import asyncio, logging, os, re, shutil, tempfile, time
+import asyncio, logging, os, re, shutil, tempfile
 from pathlib import Path
 from dotenv import load_dotenv
 from urllib.parse import urlparse
@@ -14,8 +14,6 @@ load_dotenv()
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 MAX_SIZE = 45 * 1024 * 1024
 MAX_PHOTO_SIZE = 9 * 1024 * 1024
-COOLDOWN = 15
-last_request = {}
 WELCOME_IMAGE = Path(__file__).resolve().parent / "assets" / "welcome.png"
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 
@@ -30,8 +28,7 @@ WELCOME_TEXT = (
     "YouTube, YouTube Music, TikTok, Instagram, Pinterest, Facebook, X, Threads, "
     "VK, Reddit, Twitch, Vimeo, OK, Tumblr, Dailymotion, Likee и SoundCloud.\n\n"
     "ℹ️ Закрытые публикации и истории могут быть недоступны.\n\n"
-    "📦 Максимальный размер файла - 45 МБ.\n"
-    "⏱ Интервал между загрузками - 15 секунд.\n\n"
+    "📦 Максимальный размер файла - 45 МБ.\n\n"
     "⚖️ Скачивай только материалы, на которые у тебя есть права."
 )
 
@@ -139,10 +136,6 @@ def download(url, folder):
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg, user = update.effective_message, update.effective_user
     if not msg or not user or not msg.text: return
-    now = time.monotonic()
-    if now - last_request.get(user.id, 0) < COOLDOWN:
-        await msg.reply_text('Подожди 15 секунд перед следующей загрузкой.'); return
-    last_request[user.id] = now
     url = get_url(msg.text)
     if not url:
         await msg.reply_text('Пришли публичную ссылку с поддерживаемой платформы.'); return
