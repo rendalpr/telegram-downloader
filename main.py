@@ -23,19 +23,16 @@ if not FFMPEG_AVAILABLE:
     log.warning("FFmpeg is not installed; downloads will use the best single-file format available.")
 
 WELCOME_TEXT = (
-    "👋 Привет! Я — «Дай Скачать» 🎬\n"
-    "Пришли публичную ссылку — попробую скачать видео, фото или аудио "
-    "в наилучшем качестве, доступном на платформе.\n\n"
-    "🌐 Поддерживаемые платформы:\n"
-    "▶️ YouTube и Shorts · 🎵 YouTube Music · 🎶 TikTok\n"
-    "📸 Instagram · 📌 Pinterest · 📘 Facebook\n"
-    "❎ X (Twitter) · 🧵 Threads · 🔷 VK · 👽 Reddit\n"
-    "🟣 Twitch · 🎞 Vimeo · 🟠 OK · 🟪 Tumblr\n"
-    "▶️ Dailymotion · 💚 Likee · 🎧 SoundCloud\n\n"
-    "ℹ️ Истории и закрытые публикации могут требовать входа и быть недоступны. "
-    "Spotify и Apple Music не отдают боту скачиваемые аудиофайлы.\n"
-    "📦 Ограничение файла — 45 МБ · ⏱ Пауза между загрузками — 15 секунд.\n"
-    "⚖️ Сохраняй только материалы, на которые у тебя есть права."
+    "👋 Привет! Я - «Дай Скачать by @day_zvuk» 🎬\n\n"
+    "🔗 Отправь публичную ссылку, и я попробую скачать видео, фото или аудио "
+    "в максимальном доступном качестве.\n\n"
+    "🌐 <b>Поддерживаемые платформы:</b>\n"
+    "YouTube, YouTube Music, TikTok, Instagram, Pinterest, Facebook, X, Threads, "
+    "VK, Reddit, Twitch, Vimeo, OK, Tumblr, Dailymotion, Likee и SoundCloud.\n\n"
+    "ℹ️ Закрытые публикации и истории могут быть недоступны.\n\n"
+    "📦 Максимальный размер файла - 45 МБ.\n"
+    "⏱ Интервал между загрузками - 15 секунд.\n\n"
+    "⚖️ Скачивай только материалы, на которые у тебя есть права."
 )
 
 HOSTS = (
@@ -84,10 +81,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         with WELCOME_IMAGE.open('rb') as photo:
-            await message.reply_photo(photo=photo, caption=WELCOME_TEXT)
+            await message.reply_photo(photo=photo, caption=WELCOME_TEXT, parse_mode="HTML")
     except OSError:
         log.warning("Welcome image is missing; sending the text greeting only.")
-        await message.reply_text(WELCOME_TEXT)
+        await message.reply_text(WELCOME_TEXT, parse_mode="HTML")
 
 def download(url, folder):
     host = get_host(url)
