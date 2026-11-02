@@ -3,7 +3,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 import yt_dlp
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -34,6 +34,19 @@ WELCOME_TEXT = (
     "⏱ Интервал между загрузками - 15 секунд.\n\n"
     "⚖️ Скачивай только материалы, на которые у тебя есть права."
 )
+
+WELCOME_KEYBOARD = InlineKeyboardMarkup([
+    [InlineKeyboardButton(
+        "Подписаться на канал",
+        url="https://t.me/day_zvuk",
+        style="primary",
+    )],
+    [InlineKeyboardButton(
+        "Реклама треков",
+        url="https://t.me/m/NEKbyJ1oNWM6",
+        style="success",
+    )],
+])
 
 HOSTS = (
     'youtube.com', 'youtu.be', 'youtube-nocookie.com',
@@ -81,10 +94,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         with WELCOME_IMAGE.open('rb') as photo:
-            await message.reply_photo(photo=photo, caption=WELCOME_TEXT, parse_mode="HTML")
+            await message.reply_photo(photo=photo, caption=WELCOME_TEXT, parse_mode="HTML", reply_markup=WELCOME_KEYBOARD)
     except OSError:
         log.warning("Welcome image is missing; sending the text greeting only.")
-        await message.reply_text(WELCOME_TEXT, parse_mode="HTML")
+        await message.reply_text(WELCOME_TEXT, parse_mode="HTML", reply_markup=WELCOME_KEYBOARD)
 
 def download(url, folder):
     host = get_host(url)
