@@ -1,4 +1,4 @@
-import asyncio, logging, os, re, shutil, tempfile
+import asyncio, logging, os, re, shutil, subprocess, tempfile
 from pathlib import Path
 from dotenv import load_dotenv
 from urllib.parse import urlparse
@@ -88,6 +88,29 @@ def get_url(text):
     url = m.group(0).rstrip('.,!?)')
     return url if host_matches(get_host(url), HOSTS) else None
 
+def get_video_dimensions(path):
+    ffprobe = shutil.which('ffprobe')
+    if not ffprobe:
+        return None, None
+    try:
+        result = subprocess.run(
+            [
+                ffprobe, '-v', 'error', '-select_streams', 'v:0',
+                '-show_entries', 'stream=width,height',
+                '-of', 'csv=s=x:p=0', str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        width, height = (int(value) for value in result.stdout.strip().split('x', 1))
+        if width > 0 and height > 0:
+            return width, height
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        log.warning("Could not read video dimensions: %s", exc)
+    return None, None
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     if not message:
@@ -155,7 +178,14 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with path.open('rb') as media:
                 suffix = path.suffix.lower()
                 if suffix == '.mp4':
-                    await msg.reply_video(video=media, caption='Готово.')
+                    width, height = await asyncio.to_thread(get_video_dimensions, path)
+                    await msg.reply_video(
+                        video=media,
+                        width=width,
+                        height=height,
+                        supports_streaming=True,
+                        caption='Готово.',
+                    )
                 elif suffix in AUDIO_EXTENSIONS:
                     await msg.reply_audio(audio=media, caption='Готово.')
                 elif suffix in IMAGE_EXTENSIONS and path.stat().st_size <= MAX_PHOTO_SIZE:
