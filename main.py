@@ -14,6 +14,8 @@ load_dotenv()
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 YOUTUBE_PROXY = os.getenv('YOUTUBE_PROXY')
 MAX_SIZE = 45 * 1024 * 1024
+MAX_URLS_PER_MESSAGE = 10
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 MAX_PHOTO_SIZE = 9 * 1024 * 1024
 WELCOME_IMAGE = Path(__file__).resolve().parent / "assets" / "welcome.png"
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
@@ -82,11 +84,16 @@ def get_host(url):
     except ValueError:
         return ''
 
-def get_url(text):
-    m = re.search(r'https?://\S+', text)
-    if not m: return None
-    url = m.group(0).rstrip('.,!?)')
-    return url if host_matches(get_host(url), HOSTS) else None
+URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+URL_TRAILING_PUNCTUATION = ".,!?;:)]}>»”’"
+
+def get_urls(text):
+    urls = []
+    for candidate in URL_PATTERN.findall(text):
+        url = candidate.rstrip(URL_TRAILING_PUNCTUATION)
+        if host_matches(get_host(url), HOSTS) and url not in urls:
+            urls.append(url)
+    return urls
 
 def get_video_dimensions(path):
     ffprobe = shutil.which('ffprobe')
@@ -161,49 +168,92 @@ def download(url, folder):
             raise ValueError('File too large or missing')
         return path
 
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg, user = update.effective_message, update.effective_user
-    if not msg or not user or not msg.text: return
-    url = get_url(msg.text)
-    if not url:
-        await msg.reply_text('Пришли публичную ссылку с поддерживаемой платформы.'); return
+async def process_url(msg, context, user, url, position, total):
+    label = f"{position}/{total}: " if total > 1 else ""
     if host_matches(get_host(url), PROTECTED_MUSIC_HOSTS):
-        await msg.reply_text('Spotify и Apple Music не предоставляют боту скачиваемый аудиофайл. Нужен публичный источник, который разрешает скачивание.')
+        await msg.reply_text(
+            f"{label}Spotify и Apple Music не предоставляют боту скачиваемый аудиофайл. "
+            "Нужен публичный источник, который разрешает скачивание."
+        )
         return
-    status = await msg.reply_text('⏳ Загружаю…')
+
+    status = await msg.reply_text(f"⏳ Загружаю {position}/{total}…" if total > 1 else "⏳ Загружаю…")
     try:
-        await context.bot.send_chat_action(msg.chat_id, ChatAction.UPLOAD_DOCUMENT)
-        with tempfile.TemporaryDirectory() as folder:
-            path = await asyncio.to_thread(download, url, folder)
-            with path.open('rb') as media:
-                suffix = path.suffix.lower()
-                if suffix == '.mp4':
-                    width, height = await asyncio.to_thread(get_video_dimensions, path)
-                    await msg.reply_video(
-                        video=media,
-                        width=width,
-                        height=height,
-                        supports_streaming=True,
-                        caption='Готово.',
-                    )
-                elif suffix in AUDIO_EXTENSIONS:
-                    await msg.reply_audio(audio=media, caption='Готово.')
-                elif suffix in IMAGE_EXTENSIONS and path.stat().st_size <= MAX_PHOTO_SIZE:
-                    await msg.reply_photo(photo=media, caption='Готово.')
-                else:
-                    await msg.reply_document(document=media, caption='Готово.')
-        await status.delete()
+        async with DOWNLOAD_SEMAPHORE:
+            await status.edit_text(f"⏳ Скачиваю {position}/{total}…" if total > 1 else "⏳ Скачиваю…")
+            await context.bot.send_chat_action(msg.chat_id, ChatAction.UPLOAD_DOCUMENT)
+            with tempfile.TemporaryDirectory() as folder:
+                path = await asyncio.to_thread(download, url, folder)
+                with path.open('rb') as media:
+                    suffix = path.suffix.lower()
+                    if suffix == '.mp4':
+                        width, height = await asyncio.to_thread(get_video_dimensions, path)
+                        await msg.reply_video(
+                            video=media,
+                            width=width,
+                            height=height,
+                            supports_streaming=True,
+                            caption='Готово.',
+                        )
+                    elif suffix in AUDIO_EXTENSIONS:
+                        await msg.reply_audio(audio=media, caption='Готово.')
+                    elif suffix in IMAGE_EXTENSIONS and path.stat().st_size <= MAX_PHOTO_SIZE:
+                        await msg.reply_photo(photo=media, caption='Готово.')
+                    else:
+                        await msg.reply_document(document=media, caption='Готово.')
+        try:
+            await status.delete()
+        except Exception as exc:
+            log.debug("Could not remove completed status message: %s", exc)
     except Exception as exc:
         error = str(exc)
         log.warning('Download failed for %s: %s', user.id, error)
         if host_matches(get_host(url), YOUTUBE_HOSTS) and 'sign in to confirm' in error.lower():
-            await status.edit_text('YouTube сейчас требует подтверждение для запросов с IP хостинга. Я не запрашиваю пароли или cookies; попробуй эту ссылку позже.')
+            error_message = (
+                'YouTube сейчас требует подтверждение для запросов с IP хостинга. '
+                'Я не запрашиваю пароли или cookies; попробуй эту ссылку позже.'
+            )
         else:
-            await status.edit_text('Не удалось скачать: платформа могла ограничить доступ, ссылка приватная или файл слишком большим.')
+            error_message = (
+                'Не удалось скачать: платформа могла ограничить доступ, '
+                'ссылка приватная или файл слишком большим.'
+            )
+        try:
+            await status.edit_text(f"{label}{error_message}")
+        except Exception as status_exc:
+            log.warning("Could not update download status for %s: %s", user.id, status_exc)
+            try:
+                await msg.reply_text(f"{label}{error_message}")
+            except Exception as reply_exc:
+                log.warning("Could not report download failure for %s: %s", user.id, reply_exc)
+
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg, user = update.effective_message, update.effective_user
+    if not msg or not user or not msg.text:
+        return
+
+    urls = get_urls(msg.text)
+    if not urls:
+        await msg.reply_text('Пришли публичную ссылку с поддерживаемой платформы.')
+        return
+    if len(urls) > MAX_URLS_PER_MESSAGE:
+        await msg.reply_text(
+            f'В одном сообщении можно отправить до {MAX_URLS_PER_MESSAGE} ссылок. '
+            f'Я нашёл {len(urls)}; пришли их несколькими сообщениями.'
+        )
+        return
+
+    if len(urls) > 1:
+        await msg.reply_text(
+            f'🔗 Нашёл {len(urls)} ссылок. Обрабатываю по очереди и пришлю результат для каждой.'
+        )
+
+    for position, url in enumerate(urls, start=1):
+        await process_url(msg, context, user, url, position, len(urls))
 
 def main():
     if not TOKEN: raise RuntimeError('Set TELEGRAM_BOT_TOKEN environment variable')
-    app = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).concurrent_updates(4).build()
     app.add_handler(CommandHandler('start', start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     app.run_polling(drop_pending_updates=True)
