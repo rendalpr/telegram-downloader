@@ -16,7 +16,7 @@ TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 YOUTUBE_PROXY = os.getenv('YOUTUBE_PROXY')
 MAX_SIZE = 45 * 1024 * 1024
 MAX_TELEGRAM_DOWNLOAD_SIZE = 20 * 1024 * 1024
-AUDIO_INPUT_EXTENSIONS = {'.mp3', '.m4a', '.flac', '.ogg', '.oga', '.opus', '.wav', '.aiff'}
+AUDIO_INPUT_EXTENSIONS = {'.mp3', '.m4a', '.aac', '.flac', '.ogg', '.oga', '.opus', '.wav', '.aiff'}
 MAX_URLS_PER_MESSAGE = 10
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 MAX_PHOTO_SIZE = 9 * 1024 * 1024
@@ -326,6 +326,8 @@ async def clean_uploaded_audio(update: Update, context: ContextTypes.DEFAULT_TYP
     mime_extensions = {
         "audio/mpeg": ".mp3",
         "audio/mp4": ".m4a",
+        "audio/aac": ".aac",
+        "audio/x-aac": ".aac",
         "audio/x-m4a": ".m4a",
         "audio/flac": ".flac",
         "audio/x-flac": ".flac",
@@ -352,6 +354,7 @@ async def clean_uploaded_audio(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
+    output_suffix = ".m4a" if suffix == ".aac" else suffix
     telegram_title = clean_tag_value(getattr(audio, "title", "") if audio else "")
     telegram_artist = clean_tag_value(getattr(audio, "performer", "") if audio else "")
     fallback_title = telegram_title or (Path(file_name).stem if file_name else "Аудиотрек")
@@ -362,10 +365,10 @@ async def clean_uploaded_audio(update: Update, context: ContextTypes.DEFAULT_TYP
             telegram_file = await context.bot.get_file(uploaded.file_id)
             with tempfile.TemporaryDirectory(prefix="audio-cleanup-") as folder:
                 source_path = Path(folder) / f"original{suffix}"
-                output_path = Path(folder) / f"cleaned{suffix}"
+                output_path = Path(folder) / f"cleaned{output_suffix}"
                 await telegram_file.download_to_drive(custom_path=source_path)
                 if source_path.stat().st_size > MAX_TELEGRAM_DOWNLOAD_SIZE:
-                    raise ValueError("uploaded audio exceeds Telegram's download limit")
+                    raise ValueError("uploaded audio exceeds 20 MB Telegram download limit")
 
                 title, artist = await asyncio.to_thread(
                     read_audio_metadata,
@@ -381,10 +384,10 @@ async def clean_uploaded_audio(update: Update, context: ContextTypes.DEFAULT_TYP
                     artist,
                 )
 
-                output_name = audio_output_filename(title, artist, suffix)
+                output_name = audio_output_filename(title, artist, output_suffix)
                 caption = "✅ Обложка и лишние метаданные удалены."
                 with output_path.open("rb") as cleaned_file:
-                    if suffix in {".mp3", ".m4a"}:
+                    if output_suffix in {".mp3", ".m4a"}:
                         await message.reply_audio(
                             audio=cleaned_file,
                             filename=output_name,
