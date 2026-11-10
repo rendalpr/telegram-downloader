@@ -25,8 +25,7 @@ TOPMUSIC_STOREFRONT = os.getenv("TOPMUSIC_STOREFRONT", "ru").strip().lower()
 if not re.fullmatch(r"[a-z]{2}", TOPMUSIC_STOREFRONT):
     TOPMUSIC_STOREFRONT = "ru"
 TOPMUSIC_FEED_URL = (
-    f"https://rss.applemarketingtools.com/api/v2/"
-    f"{TOPMUSIC_STOREFRONT}/music/most-played/100/songs.json"
+    f"https://itunes.apple.com/{TOPMUSIC_STOREFRONT}/rss/topsongs/limit=100/json"
 )
 TOPMUSIC_DATA_DIR = Path(os.getenv("TOPMUSIC_DATA_DIR", "").strip() or Path(__file__).resolve().parent)
 TOPMUSIC_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -332,17 +331,20 @@ def fetch_topmusic_chart():
 
     feed = payload.get("feed", {})
     tracks = []
-    for item in feed.get("results", []):
-        track_id = str(item.get("id", "")).strip()
-        title = str(item.get("name", "")).strip()
-        artist = str(item.get("artistName", "")).strip()
-        url = str(item.get("url", "")).strip()
-        if (
-            track_id
-            and title
-            and artist
-            and url.startswith("https://music.apple.com/")
-        ):
+    items = feed.get("results") or feed.get("entry", [])
+    for item in items:
+        raw_id = item.get("id", "")
+        if isinstance(raw_id, dict):
+            track_id = str(raw_id.get("attributes", {}).get("im:id", "")).strip()
+            title = str(item.get("im:name", {}).get("label", "")).strip()
+            artist = str(item.get("im:artist", {}).get("label", "")).strip()
+            url = str(raw_id.get("label", "")).strip()
+        else:
+            track_id = str(raw_id).strip()
+            title = str(item.get("name", "")).strip()
+            artist = str(item.get("artistName", "")).strip()
+            url = str(item.get("url", "")).strip()
+        if track_id and title and artist and url.startswith("https://music.apple.com/"):
             tracks.append({
                 "id": track_id,
                 "title": title,
@@ -433,7 +435,7 @@ async def topmusic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     region = "Россия" if TOPMUSIC_STOREFRONT == "ru" else TOPMUSIC_STOREFRONT.upper()
     lines = [
-        f"🎧 Новые треки из чарта Apple Music ({region}):"
+        f"🎧 Новые треки из топ-чарта Apple / iTunes ({region}):"
     ]
     for rank, track in enumerate(selected, start=1):
         label = html.escape(f"{track['title']} — {track['artist']}")
