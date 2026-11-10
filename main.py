@@ -1,5 +1,10 @@
-import asyncio, html, json, logging, os, re, shutil, sqlite3, subprocess, tempfile
+import base64, asyncio, html, json, logging, os, re, shutil, sqlite3, subprocess, tempfile
 from curl_cffi import requests as curl_requests
+from mutagen import File as MutagenFile
+from mutagen._vorbis import VCommentDict
+from mutagen.flac import FLAC, Picture
+from mutagen.id3 import APIC, COMM, ID3, TALB, TCOP, TCON, TIT2, TPE1, TPE2, TPUB, TSSE, TXXX, WXXX, WOAR
+from mutagen.mp4 import MP4, MP4Cover
 from pathlib import Path
 from dotenv import load_dotenv
 from urllib.parse import urlparse
@@ -21,6 +26,7 @@ MAX_URLS_PER_MESSAGE = 10
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 MAX_PHOTO_SIZE = 9 * 1024 * 1024
 WELCOME_IMAGE = Path(__file__).resolve().parent / "assets" / "welcome.png"
+BRAND_COVER_IMAGE = Path(__file__).resolve().parent / "assets" / "day_zvuk_cover.jpg"
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 
 TOPMUSIC_STOREFRONT = os.getenv("TOPMUSIC_STOREFRONT", "ru").strip().lower()
@@ -41,7 +47,7 @@ WELCOME_TEXT = (
     "🔗 Отправь публичную ссылку, и я попробую скачать видео, фото или аудио "
     "в максимальном доступном качестве.\n"
     "🎵 Для видео пришлю оригинал и отдельный MP3.\n"
-    "🎼 Пришли аудиофайл — уберу обложку и лишние теги, оставив название и исполнителя.\n\n"
+    "🎼 Пришли трек — поставлю обложку канала и ссылку в теги, сохранив название и исполнителя.\n\n"
     "🌐 <b>Платформы, ссылки которых я пробую скачать:</b>\n"
     "YouTube, YouTube Music, TikTok, Instagram, Pinterest, Facebook, X, Threads, "
     "VK, Reddit, Twitch, Vimeo, OK, Tumblr, Dailymotion, Likee и SoundCloud.\n\n"
@@ -302,6 +308,90 @@ def strip_audio_metadata(source_path, output_path, title, artist):
         raise ValueError("clean audio exceeds the 45 MiB file limit")
 
 
+def apply_channel_branding(path, title, artist):
+    if not BRAND_COVER_IMAGE.is_file():
+        raise RuntimeError("channel cover image is missing")
+    cover_data = BRAND_COVER_IMAGE.read_bytes()
+    channel_url = "https://t.me/day_zvuk"
+    audio = MutagenFile(path, easy=False)
+    if audio is None:
+        raise ValueError("unsupported audio format")
+    if audio.tags is None:
+        audio.add_tags()
+    tags = audio.tags
+
+    if isinstance(audio, MP4):
+        tags.clear()
+        tags["©nam"] = [title]
+        if artist:
+            tags["©ART"] = [artist]
+        for key in ("©alb", "©cmt", "©gen", "©wrt", "©too", "cprt", "purl", "desc", "catg", "keyw"):
+            tags[key] = [channel_url]
+        tags["covr"] = [MP4Cover(cover_data, imageformat=MP4Cover.FORMAT_JPEG)]
+    elif isinstance(audio, FLAC):
+        tags.clear()
+        tags.vendor = channel_url
+        tags["title"] = [title]
+        if artist:
+            tags["artist"] = [artist]
+        for key in ("album", "comment", "genre", "composer", "publisher", "copyright", "website", "url", "encoder"):
+            tags[key] = [channel_url]
+        audio.clear_pictures()
+        picture = Picture()
+        picture.type = 3
+        picture.mime = "image/jpeg"
+        picture.desc = "Cover"
+        picture.width = 640
+        picture.height = 640
+        picture.depth = 24
+        picture.data = cover_data
+        audio.add_picture(picture)
+    elif isinstance(tags, ID3):
+        tags.clear()
+        tags.add(TIT2(encoding=3, text=[title]))
+        if artist:
+            tags.add(TPE1(encoding=3, text=[artist]))
+        tags.add(TALB(encoding=3, text=[channel_url]))
+        tags.add(TPE2(encoding=3, text=[channel_url]))
+        tags.add(TCON(encoding=3, text=[channel_url]))
+        tags.add(TPUB(encoding=3, text=[channel_url]))
+        tags.add(TCOP(encoding=3, text=[channel_url]))
+        tags.add(TSSE(encoding=3, text=[channel_url]))
+        tags.add(COMM(encoding=3, lang="eng", desc="Comment", text=[channel_url]))
+        tags.add(TXXX(encoding=3, desc="Website", text=[channel_url]))
+        tags.add(WXXX(encoding=3, desc="Website", url=channel_url))
+        tags.add(WOAR(url=channel_url))
+        tags.add(APIC(
+            encoding=3,
+            mime="image/jpeg",
+            type=3,
+            desc="Cover",
+            data=cover_data,
+        ))
+    elif isinstance(tags, VCommentDict):
+        tags.clear()
+        tags.vendor = channel_url
+        tags["title"] = [title]
+        if artist:
+            tags["artist"] = [artist]
+        for key in ("album", "comment", "genre", "composer", "publisher", "copyright", "website", "url", "encoder"):
+            tags[key] = [channel_url]
+        picture = Picture()
+        picture.type = 3
+        picture.mime = "image/jpeg"
+        picture.desc = "Cover"
+        picture.width = 640
+        picture.height = 640
+        picture.depth = 24
+        picture.data = cover_data
+        encoded_picture = base64.b64encode(picture.write()).decode("ascii")
+        tags["metadata_block_picture"] = [encoded_picture]
+    else:
+        raise ValueError("unsupported audio metadata format")
+
+    audio.save()
+
+
 def audio_output_filename(title, artist, suffix):
     base = f"{artist} - {title}" if artist else title
     base = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", base)
@@ -358,7 +448,7 @@ async def clean_uploaded_audio(update: Update, context: ContextTypes.DEFAULT_TYP
     telegram_title = clean_tag_value(getattr(audio, "title", "") if audio else "")
     telegram_artist = clean_tag_value(getattr(audio, "performer", "") if audio else "")
     fallback_title = telegram_title or (Path(file_name).stem if file_name else "Аудиотрек")
-    status = await message.reply_text("⏳ Убираю обложку и лишние теги…")
+    status = await message.reply_text("⏳ Ставлю обложку канала и обновляю теги…")
 
     try:
         async with DOWNLOAD_SEMAPHORE:
@@ -383,9 +473,15 @@ async def clean_uploaded_audio(update: Update, context: ContextTypes.DEFAULT_TYP
                     title,
                     artist,
                 )
+                await asyncio.to_thread(
+                    apply_channel_branding,
+                    output_path,
+                    title,
+                    artist,
+                )
 
                 output_name = audio_output_filename(title, artist, output_suffix)
-                caption = "✅ Обложка и лишние метаданные удалены."
+                caption = "✅ Добавил обложку и ссылку канала в теги."
                 with output_path.open("rb") as cleaned_file:
                     if output_suffix in {".mp3", ".m4a"}:
                         await message.reply_audio(

@@ -61,4 +61,4 @@ Then run `sudo systemctl daemon-reload` and restart the service. systemd creates
 
 ## Clean audio metadata
 
-Send the bot an audio file to remove embedded artwork and other tags while keeping the track title and artist when present. Audio streams are copied without re-encoding. Supported formats are MP3, M4A, FLAC, OGG/Opus, WAV, and AIFF. The official Telegram Bot API limits bot downloads to 20 MB per input file.
+Send the bot an audio file to apply the channel cover and put https://t.me/day_zvuk in promotional metadata fields while keeping the track title and artist. Audio streams are copied without re-encoding. Supported formats are MP3, M4A, FLAC, OGG/Opus, WAV, and AIFF. The official Telegram Bot API limits bot downloads to 20 MB per input file.
