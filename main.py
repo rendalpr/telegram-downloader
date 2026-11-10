@@ -1,4 +1,4 @@
-import asyncio, logging, os, re, shutil, subprocess, tempfile
+import asyncio, html, json, logging, os, re, shutil, sqlite3, subprocess, tempfile, urllib.request
 from pathlib import Path
 from dotenv import load_dotenv
 from urllib.parse import urlparse
@@ -19,6 +19,15 @@ DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 MAX_PHOTO_SIZE = 9 * 1024 * 1024
 WELCOME_IMAGE = Path(__file__).resolve().parent / "assets" / "welcome.png"
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
+
+TOPMUSIC_STOREFRONT = os.getenv("TOPMUSIC_STOREFRONT", "ru").strip().lower()
+if not re.fullmatch(r"[a-z]{2}", TOPMUSIC_STOREFRONT):
+    TOPMUSIC_STOREFRONT = "ru"
+TOPMUSIC_FEED_URL = (
+    f"https://rss.applemarketingtools.com/api/v2/"
+    f"{TOPMUSIC_STOREFRONT}/music/most-played/100/songs.json"
+)
+TOPMUSIC_DB = Path(__file__).resolve().parent / "topmusic_seen.sqlite3"
 
 if not FFMPEG_AVAILABLE:
     log.warning("FFmpeg is not installed; downloads will use the best single-file format available.")
@@ -303,6 +312,146 @@ async def process_url(msg, context, user, url, position, total):
             except Exception as reply_exc:
                 log.warning("Could not report download failure for %s: %s", user.id, reply_exc)
 
+def _topmusic_key(track):
+    value = f"{track['artist']}|{track['title']}".casefold()
+    key = re.sub(r"[^\w]+", "", value, flags=re.UNICODE)
+    return key or track["id"]
+
+
+def fetch_topmusic_chart():
+    request = urllib.request.Request(
+        TOPMUSIC_FEED_URL,
+        headers={"User-Agent": "DayZVukBot/1.0"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if response.status != 200:
+            raise RuntimeError(f"Apple chart returned HTTP {response.status}")
+        payload = json.load(response)
+
+    feed = payload.get("feed", {})
+    tracks = []
+    for item in feed.get("results", []):
+        track_id = str(item.get("id", "")).strip()
+        title = str(item.get("name", "")).strip()
+        artist = str(item.get("artistName", "")).strip()
+        url = str(item.get("url", "")).strip()
+        if (
+            track_id
+            and title
+            and artist
+            and url.startswith("https://music.apple.com/")
+        ):
+            tracks.append({
+                "id": track_id,
+                "title": title,
+                "artist": artist,
+                "url": url,
+            })
+    if not tracks:
+        raise RuntimeError("Apple chart returned no usable songs")
+    return tracks
+
+
+def reserve_new_topmusic_tracks(user_id, tracks, limit=10):
+    user_id = int(user_id)
+    with sqlite3.connect(TOPMUSIC_DB, timeout=10) as db:
+        db.execute("PRAGMA busy_timeout = 10000")
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS topmusic_seen ("
+            "user_id INTEGER NOT NULL, "
+            "track_key TEXT NOT NULL, "
+            "PRIMARY KEY (user_id, track_key))"
+        )
+        db.commit()
+        db.execute("BEGIN IMMEDIATE")
+        seen = {
+            row[0]
+            for row in db.execute(
+                "SELECT track_key FROM topmusic_seen WHERE user_id = ?",
+                (user_id,),
+            )
+        }
+        selected = []
+        reserved_keys = set()
+        for track in tracks:
+            key = _topmusic_key(track)
+            if key in seen or key in reserved_keys:
+                continue
+            selected.append({**track, "seen_key": key})
+            reserved_keys.add(key)
+            if len(selected) == limit:
+                break
+        db.executemany(
+            "INSERT OR IGNORE INTO topmusic_seen (user_id, track_key) VALUES (?, ?)",
+            [(user_id, track["seen_key"]) for track in selected],
+        )
+        db.commit()
+        return selected
+
+
+def release_topmusic_tracks(user_id, tracks):
+    if not tracks:
+        return
+    with sqlite3.connect(TOPMUSIC_DB, timeout=10) as db:
+        db.executemany(
+            "DELETE FROM topmusic_seen WHERE user_id = ? AND track_key = ?",
+            [(int(user_id), track["seen_key"]) for track in tracks],
+        )
+        db.commit()
+
+
+async def topmusic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not user:
+        return
+
+    status = await message.reply_text("⏳ Получаю актуальный чарт Apple Music…")
+    try:
+        tracks = await asyncio.to_thread(fetch_topmusic_chart)
+        selected = await asyncio.to_thread(
+            reserve_new_topmusic_tracks,
+            user.id,
+            tracks,
+            10,
+        )
+    except Exception as exc:
+        log.warning("Could not fetch top music chart: %s", type(exc).__name__)
+        await status.edit_text(
+            "Не удалось получить чарт Apple Music. Попробуй команду немного позже."
+        )
+        return
+
+    if not selected:
+        await status.edit_text(
+            "В текущем топ-100 Apple Music нет новых для тебя треков. "
+            "Повторов не будет; попробуй позже, когда чарт обновится."
+        )
+        return
+
+    region = "Россия" if TOPMUSIC_STOREFRONT == "ru" else TOPMUSIC_STOREFRONT.upper()
+    lines = [
+        f"🎧 Новые треки из чарта Apple Music ({region}):"
+    ]
+    for rank, track in enumerate(selected, start=1):
+        label = html.escape(f"{track['title']} — {track['artist']}")
+        url = html.escape(track["url"], quote=True)
+        lines.append(f'{rank}. <a href="{url}">{label}</a>')
+    lines.append(
+        "\nСлушай по официальным ссылкам. Защищённые треки бот не скачивает."
+    )
+
+    try:
+        await status.edit_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception as exc:
+        await asyncio.to_thread(release_topmusic_tracks, user.id, selected)
+        log.warning("Could not send top music chart: %s", type(exc).__name__)
+
+
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg, user = update.effective_message, update.effective_user
     if not msg or not user or not msg.text:
@@ -331,6 +480,7 @@ def main():
     if not TOKEN: raise RuntimeError('Set TELEGRAM_BOT_TOKEN environment variable')
     app = Application.builder().token(TOKEN).concurrent_updates(4).build()
     app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('topmusic', topmusic))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     app.run_polling(drop_pending_updates=True)
 
