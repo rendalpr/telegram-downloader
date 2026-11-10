@@ -26,7 +26,8 @@ if not FFMPEG_AVAILABLE:
 WELCOME_TEXT = (
     "👋 Привет! Я - «Дай Скачать by @day_zvuk» 🎬\n\n"
     "🔗 Отправь публичную ссылку, и я попробую скачать видео, фото или аудио "
-    "в максимальном доступном качестве.\n\n"
+    "в максимальном доступном качестве.\n"
+    "🎵 Для видео пришлю оригинал и отдельный MP3.\n\n"
     "🌐 <b>Платформы, ссылки которых я пробую скачать:</b>\n"
     "YouTube, YouTube Music, TikTok, Instagram, Pinterest, Facebook, X, Threads, "
     "VK, Reddit, Twitch, Vimeo, OK, Tumblr, Dailymotion, Likee и SoundCloud.\n\n"
@@ -168,6 +169,49 @@ def download(url, folder):
             raise ValueError('File too large or missing')
         return path
 
+
+def extract_mp3(video_path):
+    ffmpeg = shutil.which('ffmpeg')
+    if not ffmpeg:
+        raise RuntimeError('FFmpeg is not installed')
+
+    mp3_path = Path(video_path).with_suffix('.mp3')
+    command = [
+        ffmpeg, '-hide_banner', '-loglevel', 'error', '-y',
+        '-i', str(video_path),
+        '-map', '0:a:0',
+        '-vn',
+        '-codec:a', 'libmp3lame',
+        '-q:a', '2',
+        '-id3v2_version', '3',
+        str(mp3_path),
+    ]
+    try:
+        subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=600,
+        )
+    except subprocess.CalledProcessError as exc:
+        mp3_path.unlink(missing_ok=True)
+        if 'matches no streams' in (exc.stderr or '').lower():
+            raise ValueError('Video has no audio track') from exc
+        log.warning("FFmpeg MP3 extraction failed: %s", (exc.stderr or '')[-1000:])
+        raise RuntimeError('MP3 extraction failed') from exc
+    except (OSError, subprocess.SubprocessError):
+        mp3_path.unlink(missing_ok=True)
+        raise
+
+    if not mp3_path.is_file() or mp3_path.stat().st_size == 0:
+        mp3_path.unlink(missing_ok=True)
+        raise RuntimeError('MP3 output is empty')
+    if mp3_path.stat().st_size > MAX_SIZE:
+        mp3_path.unlink(missing_ok=True)
+        raise ValueError('MP3 exceeds the 45 MiB file limit')
+    return mp3_path
+
 async def process_url(msg, context, user, url, position, total):
     label = f"{position}/{total}: " if total > 1 else ""
     if host_matches(get_host(url), PROTECTED_MUSIC_HOSTS):
@@ -178,14 +222,33 @@ async def process_url(msg, context, user, url, position, total):
         return
 
     status = await msg.reply_text(f"⏳ Загружаю {position}/{total}…" if total > 1 else "⏳ Загружаю…")
+    mp3_error = None
     try:
         async with DOWNLOAD_SEMAPHORE:
             await status.edit_text(f"⏳ Скачиваю {position}/{total}…" if total > 1 else "⏳ Скачиваю…")
             await context.bot.send_chat_action(msg.chat_id, ChatAction.UPLOAD_DOCUMENT)
             with tempfile.TemporaryDirectory() as folder:
                 path = await asyncio.to_thread(download, url, folder)
+                suffix = path.suffix.lower()
+                mp3_path = None
+                if suffix in VIDEO_EXTENSIONS:
+                    await status.edit_text(
+                        f"🎵 Извлекаю MP3 {position}/{total}…" if total > 1 else "🎵 Извлекаю MP3…"
+                    )
+                    try:
+                        mp3_path = await asyncio.to_thread(extract_mp3, path)
+                    except Exception as exc:
+                        log.warning("MP3 extraction failed for %s: %s", user.id, exc)
+                        if isinstance(exc, ValueError) and 'no audio track' in str(exc).lower():
+                            mp3_error = 'в видео нет аудиодорожки.'
+                        elif isinstance(exc, ValueError) and '45 mib' in str(exc).lower():
+                            mp3_error = 'MP3 превышает лимит 45 МиБ.'
+                        elif isinstance(exc, RuntimeError) and 'ffmpeg' in str(exc).lower():
+                            mp3_error = 'на сервере недоступен FFmpeg.'
+                        else:
+                            mp3_error = 'не удалось извлечь аудиодорожку.'
+                caption = f"Готово. {position}/{total}" if total > 1 else "Готово."
                 with path.open('rb') as media:
-                    suffix = path.suffix.lower()
                     if suffix == '.mp4':
                         width, height = await asyncio.to_thread(get_video_dimensions, path)
                         await msg.reply_video(
@@ -193,18 +256,27 @@ async def process_url(msg, context, user, url, position, total):
                             width=width,
                             height=height,
                             supports_streaming=True,
-                            caption='Готово.',
+                            caption=caption,
                         )
                     elif suffix in AUDIO_EXTENSIONS:
-                        await msg.reply_audio(audio=media, caption='Готово.')
+                        await msg.reply_audio(audio=media, caption=caption)
                     elif suffix in IMAGE_EXTENSIONS and path.stat().st_size <= MAX_PHOTO_SIZE:
-                        await msg.reply_photo(photo=media, caption='Готово.')
+                        await msg.reply_photo(photo=media, caption=caption)
                     else:
-                        await msg.reply_document(document=media, caption='Готово.')
-        try:
-            await status.delete()
-        except Exception as exc:
-            log.debug("Could not remove completed status message: %s", exc)
+                        await msg.reply_document(document=media, caption=caption)
+
+                if mp3_path:
+                    with mp3_path.open('rb') as audio:
+                        mp3_caption = f"🎵 MP3 из видео {position}/{total}" if total > 1 else "🎵 MP3 из видео"
+                        await msg.reply_audio(audio=audio, caption=mp3_caption)
+
+        if mp3_error:
+            await status.edit_text(f"{label}Видео отправлено, но {mp3_error}")
+        else:
+            try:
+                await status.delete()
+            except Exception as exc:
+                log.debug("Could not remove completed status message: %s", exc)
     except Exception as exc:
         error = str(exc)
         log.warning('Download failed for %s: %s', user.id, error)
