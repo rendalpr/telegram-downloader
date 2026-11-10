@@ -27,7 +27,9 @@ TOPMUSIC_FEED_URL = (
     f"https://rss.applemarketingtools.com/api/v2/"
     f"{TOPMUSIC_STOREFRONT}/music/most-played/100/songs.json"
 )
-TOPMUSIC_DB = Path(__file__).resolve().parent / "topmusic_seen.sqlite3"
+TOPMUSIC_DATA_DIR = Path(os.getenv("TOPMUSIC_DATA_DIR", "").strip() or Path(__file__).resolve().parent)
+TOPMUSIC_DATA_DIR.mkdir(parents=True, exist_ok=True)
+TOPMUSIC_DB = TOPMUSIC_DATA_DIR / "topmusic_seen.sqlite3"
 
 if not FFMPEG_AVAILABLE:
     log.warning("FFmpeg is not installed; downloads will use the best single-file format available.")
@@ -416,7 +418,7 @@ async def topmusic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             10,
         )
     except Exception as exc:
-        log.warning("Could not fetch top music chart: %s", type(exc).__name__)
+        log.warning("Could not fetch top music chart (%s): %s", type(exc).__name__, exc)
         await status.edit_text(
             "Не удалось получить чарт Apple Music. Попробуй команду немного позже."
         )
