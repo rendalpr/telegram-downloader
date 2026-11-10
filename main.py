@@ -1,4 +1,5 @@
-import asyncio, html, json, logging, os, re, shutil, sqlite3, subprocess, tempfile, urllib.request
+import asyncio, html, json, logging, os, re, shutil, sqlite3, subprocess, tempfile
+from curl_cffi import requests as curl_requests
 from pathlib import Path
 from dotenv import load_dotenv
 from urllib.parse import urlparse
@@ -321,14 +322,13 @@ def _topmusic_key(track):
 
 
 def fetch_topmusic_chart():
-    request = urllib.request.Request(
+    response = curl_requests.get(
         TOPMUSIC_FEED_URL,
-        headers={"User-Agent": "DayZVukBot/1.0"},
+        impersonate="chrome",
+        timeout=20,
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        if response.status != 200:
-            raise RuntimeError(f"Apple chart returned HTTP {response.status}")
-        payload = json.load(response)
+    response.raise_for_status()
+    payload = response.json()
 
     feed = payload.get("feed", {})
     tracks = []
