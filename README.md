@@ -45,3 +45,16 @@ See the provider's [deployment guide](https://bot-hosting.net/docs/guides/create
 - YouTube may reject requests from the hosting provider's IP and require verification.
 - Download only content you own or have permission to save. Respect copyright and platform terms.
 - The bot does not bypass private-account controls, DRM, paywalls or other access restrictions.
+
+## Oracle Linux / systemd deployment
+
+The bot stores the `/topmusic` no-repeat history in SQLite. If the service uses `ProtectSystem=strict`, give it a writable state directory with a systemd drop-in:
+
+```ini
+[Service]
+StateDirectory=telegram-downloader
+StateDirectoryMode=0750
+Environment=TOPMUSIC_DATA_DIR=/var/lib/telegram-downloader
+```
+
+Then run `sudo systemctl daemon-reload` and restart the service. systemd creates `/var/lib/telegram-downloader` with the service user's ownership, so the history survives code updates.
