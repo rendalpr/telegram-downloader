@@ -266,9 +266,13 @@ async def process_url(msg, context, user, url, position, total):
                         await msg.reply_document(document=media, caption=caption)
 
                 if mp3_path:
-                    with mp3_path.open('rb') as audio:
-                        mp3_caption = f"🎵 MP3 из видео {position}/{total}" if total > 1 else "🎵 MP3 из видео"
-                        await msg.reply_audio(audio=audio, caption=mp3_caption)
+                    try:
+                        with mp3_path.open('rb') as audio:
+                            mp3_caption = f"🎵 MP3 из видео {position}/{total}" if total > 1 else "🎵 MP3 из видео"
+                            await msg.reply_audio(audio=audio, caption=mp3_caption)
+                    except Exception as exc:
+                        log.warning("MP3 upload failed for %s: %s", user.id, exc)
+                        mp3_error = 'не удалось отправить MP3-файл.'
 
         if mp3_error:
             await status.edit_text(f"{label}Видео отправлено, но {mp3_error}")
