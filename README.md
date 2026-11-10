@@ -58,3 +58,7 @@ Environment=TOPMUSIC_DATA_DIR=/var/lib/telegram-downloader
 ```
 
 Then run `sudo systemctl daemon-reload` and restart the service. systemd creates `/var/lib/telegram-downloader` with the service user's ownership, so the history survives code updates.
+
+## Clean audio metadata
+
+Send the bot an audio file to remove embedded artwork and other tags while keeping the track title and artist when present. Audio streams are copied without re-encoding. Supported formats are MP3, M4A, FLAC, OGG/Opus, WAV, and AIFF. The official Telegram Bot API limits bot downloads to 20 MB per input file.
