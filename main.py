@@ -15,6 +15,8 @@ load_dotenv()
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 YOUTUBE_PROXY = os.getenv('YOUTUBE_PROXY')
 MAX_SIZE = 45 * 1024 * 1024
+MAX_TELEGRAM_DOWNLOAD_SIZE = 20 * 1024 * 1024
+AUDIO_INPUT_EXTENSIONS = {'.mp3', '.m4a', '.flac', '.ogg', '.oga', '.opus', '.wav', '.aiff'}
 MAX_URLS_PER_MESSAGE = 10
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 MAX_PHOTO_SIZE = 9 * 1024 * 1024
@@ -38,7 +40,8 @@ WELCOME_TEXT = (
     "👋 Привет! Я - «Дай Скачать by @day_zvuk» 🎬\n\n"
     "🔗 Отправь публичную ссылку, и я попробую скачать видео, фото или аудио "
     "в максимальном доступном качестве.\n"
-    "🎵 Для видео пришлю оригинал и отдельный MP3.\n\n"
+    "🎵 Для видео пришлю оригинал и отдельный MP3.\n"
+    "🎼 Пришли аудиофайл — уберу обложку и лишние теги, оставив название и исполнителя.\n\n"
     "🌐 <b>Платформы, ссылки которых я пробую скачать:</b>\n"
     "YouTube, YouTube Music, TikTok, Instagram, Pinterest, Facebook, X, Threads, "
     "VK, Reddit, Twitch, Vimeo, OK, Tumblr, Dailymotion, Likee и SoundCloud.\n\n"
@@ -222,6 +225,204 @@ def extract_mp3(video_path):
         mp3_path.unlink(missing_ok=True)
         raise ValueError('MP3 exceeds the 45 MiB file limit')
     return mp3_path
+
+def clean_tag_value(value):
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or "")).strip()
+
+
+def read_audio_metadata(path):
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise RuntimeError("ffprobe is not installed")
+    result = subprocess.run(
+        [
+            ffprobe, "-v", "error", "-show_format", "-show_streams",
+            "-of", "json", str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    info = json.loads(result.stdout or "{}")
+    groups = [info.get("format", {}).get("tags", {})]
+    groups.extend(stream.get("tags", {}) for stream in info.get("streams", []))
+
+    def find_tag(names):
+        for tags in groups:
+            normalized = {
+                str(key).casefold(): clean_tag_value(value)
+                for key, value in tags.items()
+            }
+            for name in names:
+                if normalized.get(name):
+                    return normalized[name]
+        return ""
+
+    return (
+        find_tag(("title", "track_name")),
+        find_tag(("artist", "performer", "album_artist", "albumartist")),
+    )
+
+
+def strip_audio_metadata(source_path, output_path, title, artist):
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is not installed")
+
+    command = [
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+        "-i", str(source_path),
+        "-map", "0:a:0",
+        "-map_metadata", "-1",
+        "-map_metadata:s:a:0", "-1",
+        "-map_chapters", "-1",
+        "-c:a", "copy",
+        "-vn", "-sn", "-dn",
+        "-metadata", f"title={clean_tag_value(title)}",
+        "-metadata", "encoder=",
+    ]
+    if artist:
+        command.extend(["-metadata", f"artist={clean_tag_value(artist)}"])
+    if output_path.suffix.lower() == ".mp3":
+        command.extend(["-id3v2_version", "3"])
+    command.append(str(output_path))
+
+    subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=180,
+    )
+    if not output_path.is_file() or output_path.stat().st_size == 0:
+        raise RuntimeError("clean audio output is empty")
+    if output_path.stat().st_size > MAX_SIZE:
+        output_path.unlink(missing_ok=True)
+        raise ValueError("clean audio exceeds the 45 MiB file limit")
+
+
+def audio_output_filename(title, artist, suffix):
+    base = f"{artist} - {title}" if artist else title
+    base = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", base)
+    base = re.sub(r"\s+", " ", base).strip(" .")[:140] or "cleaned-audio"
+    return f"{base}{suffix}"
+
+
+async def clean_uploaded_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if not message:
+        return
+
+    audio = message.audio
+    document = message.document
+    uploaded = audio or document
+    if not uploaded:
+        return
+
+    file_name = getattr(uploaded, "file_name", None) or ""
+    suffix = Path(file_name).suffix.lower()
+    mime_type = (getattr(uploaded, "mime_type", None) or "").lower()
+    mime_extensions = {
+        "audio/mpeg": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/x-m4a": ".m4a",
+        "audio/flac": ".flac",
+        "audio/x-flac": ".flac",
+        "audio/ogg": ".ogg",
+        "audio/opus": ".opus",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/aiff": ".aiff",
+        "audio/x-aiff": ".aiff",
+    }
+    if suffix not in AUDIO_INPUT_EXTENSIONS:
+        suffix = mime_extensions.get(mime_type, "")
+    if suffix not in AUDIO_INPUT_EXTENSIONS:
+        await message.reply_text(
+            "Пришли аудиофайл MP3, M4A, FLAC, OGG/Opus, WAV или AIFF."
+        )
+        return
+
+    file_size = getattr(uploaded, "file_size", None)
+    if file_size and file_size > MAX_TELEGRAM_DOWNLOAD_SIZE:
+        await message.reply_text(
+            "Файл больше 20 МБ — стандартный Telegram Bot API не даёт боту его скачать. "
+            "Пришли файл поменьше."
+        )
+        return
+
+    telegram_title = clean_tag_value(getattr(audio, "title", "") if audio else "")
+    telegram_artist = clean_tag_value(getattr(audio, "performer", "") if audio else "")
+    fallback_title = telegram_title or (Path(file_name).stem if file_name else "Аудиотрек")
+    status = await message.reply_text("⏳ Убираю обложку и лишние теги…")
+
+    try:
+        async with DOWNLOAD_SEMAPHORE:
+            telegram_file = await context.bot.get_file(uploaded.file_id)
+            with tempfile.TemporaryDirectory(prefix="audio-cleanup-") as folder:
+                source_path = Path(folder) / f"original{suffix}"
+                output_path = Path(folder) / f"cleaned{suffix}"
+                await telegram_file.download_to_drive(custom_path=source_path)
+                if source_path.stat().st_size > MAX_TELEGRAM_DOWNLOAD_SIZE:
+                    raise ValueError("uploaded audio exceeds Telegram's download limit")
+
+                title, artist = await asyncio.to_thread(
+                    read_audio_metadata,
+                    source_path,
+                )
+                title = title or fallback_title
+                artist = artist or telegram_artist
+                await asyncio.to_thread(
+                    strip_audio_metadata,
+                    source_path,
+                    output_path,
+                    title,
+                    artist,
+                )
+
+                output_name = audio_output_filename(title, artist, suffix)
+                caption = "✅ Обложка и лишние метаданные удалены."
+                with output_path.open("rb") as cleaned_file:
+                    if suffix in {".mp3", ".m4a"}:
+                        await message.reply_audio(
+                            audio=cleaned_file,
+                            filename=output_name,
+                            title=title[:256],
+                            performer=artist[:256] if artist else None,
+                            caption=caption,
+                        )
+                    else:
+                        await message.reply_document(
+                            document=cleaned_file,
+                            filename=output_name,
+                            caption=caption,
+                        )
+            try:
+                await status.delete()
+            except Exception as exc:
+                log.debug("Could not remove audio cleanup status: %s", exc)
+    except Exception as exc:
+        log.warning(
+            "Audio cleanup failed for user %s (%s): %s",
+            update.effective_user.id if update.effective_user else "unknown",
+            type(exc).__name__,
+            exc,
+        )
+        if isinstance(exc, ValueError) and "20 mb" in str(exc).lower():
+            error_text = "Файл больше 20 МБ. Пришли аудио поменьше."
+        elif isinstance(exc, RuntimeError) and ("ffmpeg" in str(exc).lower() or "ffprobe" in str(exc).lower()):
+            error_text = "На сервере недоступен FFmpeg/FFprobe."
+        else:
+            error_text = (
+                "Не удалось очистить файл. Проверь, что аудио не повреждено "
+                "и его формат поддерживается."
+            )
+        try:
+            await status.edit_text(error_text)
+        except Exception as status_exc:
+            log.warning("Could not report audio cleanup failure: %s", status_exc)
+
 
 async def process_url(msg, context, user, url, position, total):
     label = f"{position}/{total}: " if total > 1 else ""
@@ -485,6 +686,7 @@ def main():
     app = Application.builder().token(TOKEN).concurrent_updates(4).build()
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('topmusic', topmusic))
+    app.add_handler(MessageHandler(filters.AUDIO | filters.Document.ALL, clean_uploaded_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     app.run_polling(drop_pending_updates=True)
 
